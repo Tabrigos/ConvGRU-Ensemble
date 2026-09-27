@@ -11,10 +11,12 @@ import xarray as xr
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
+from .horizon import HorizonError, check_forecast_steps, trained_forecast_steps
 from .inputs import TRAINED_PAST_STEPS, InputError, select_past, to_rain_rate_mm_h
 from .output import NETCDF_ENCODING, build_forecast_dataset
 
 _model = None
+_max_forecast_steps: int | None = None
 
 # File signatures: NetCDF classic and 64-bit offset ("CDF\x01", "CDF\x02"), CDF-5 ("CDF\x05"),
 # and NetCDF4, which is an HDF5 file. Checked directly, so no libmagic is needed.
@@ -48,8 +50,10 @@ def _load_model():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _model
+    global _model, _max_forecast_steps
     _model = _load_model()
+    cap = os.environ.get("MAX_FORECAST_STEPS")
+    _max_forecast_steps = int(cap) if cap else None
     yield
     _model = None
 
@@ -79,6 +83,7 @@ async def model_info():
         "input_channels": hp.input_channels,
         "num_blocks": hp.num_blocks,
         "forecast_steps": hp.forecast_steps,
+        "max_forecast_steps": _max_forecast_steps or trained_forecast_steps(_model),
         "ensemble_size": hp.ensemble_size,
         "noisy_decoder": hp.noisy_decoder,
         "loss_class": str(hp.loss_class),
@@ -94,7 +99,11 @@ async def predict(
     past_steps: int = Query(  # noqa: B008
         TRAINED_PAST_STEPS, ge=1, le=48, description="Past frames given to the model, taken from the end of the file"
     ),
-    forecast_steps: int = Query(12, ge=1, le=48, description="Number of future 5-min steps (max 48 = 4h)"),  # noqa: B008
+    forecast_steps: int = Query(  # noqa: B008
+        12,
+        ge=1,
+        description="Number of future 5-min steps; capped at the trained horizon unless MAX_FORECAST_STEPS is set",
+    ),
     ensemble_size: int = Query(10, ge=1, le=10, description="Number of ensemble members (max 10)"),  # noqa: B008
 ):
     """
@@ -104,6 +113,12 @@ async def predict(
     returns NetCDF predictions with ensemble forecasts.
     """
     t0 = time.perf_counter()
+
+    trained = trained_forecast_steps(_model)
+    try:
+        horizon_warning = check_forecast_steps(forecast_steps, trained, _max_forecast_steps)
+    except HorizonError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # Read file and check size (max 100 MB)
     max_size = 100 * 1024 * 1024
@@ -166,6 +181,8 @@ async def predict(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if dropped:
         rain.messages.insert(0, dropped)
+    if horizon_warning:
+        rain.messages.append(horizon_warning)
     if np.isinf(rain.values).any():
         raise HTTPException(
             status_code=422,
@@ -188,6 +205,8 @@ async def predict(
         attrs={
             "elapsed_seconds": f"{elapsed:.3f}",
             "past_steps": past_steps,
+            "trained_forecast_steps": trained,
+            **({"beyond_training_horizon": horizon_warning} if horizon_warning else {}),
             "input_units": rain.units,
             "input_messages": "; ".join(rain.messages),
         },

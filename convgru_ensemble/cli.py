@@ -5,6 +5,7 @@ import time
 import fire
 import xarray as xr
 
+from .horizon import check_forecast_steps, trained_forecast_steps
 from .inputs import TRAINED_PAST_STEPS, select_past, to_rain_rate_mm_h
 from .output import NETCDF_ENCODING, build_forecast_dataset
 
@@ -31,6 +32,7 @@ def predict(
     units: str | None = None,
     past_steps: int = TRAINED_PAST_STEPS,
     forecast_steps: int = 12,
+    max_forecast_steps: int | None = None,
     ensemble_size: int = 10,
     device: str = "cpu",
     output: str = "predictions.nc",
@@ -45,12 +47,17 @@ def predict(
         variable: Name of the rain rate variable in the NetCDF file.
         units: Units of the input, overriding the file's 'units' attribute (e.g. 'mm/h', 'kg m-2 s-1').
         past_steps: Number of past frames given to the model, taken from the end of the file (default 6, as in training).
-        forecast_steps: Number of future timesteps to forecast.
+        forecast_steps: Number of future timesteps to forecast (default 12, the trained horizon).
+        max_forecast_steps: Cap on forecast_steps. Default is the trained horizon; raise it to extrapolate beyond.
         ensemble_size: Number of ensemble members to generate.
         device: Device for inference ('cpu' or 'cuda').
         output: Path for the output NetCDF file.
     """
     model = _load_model(checkpoint, hub_repo, device)
+    trained = trained_forecast_steps(model)
+    horizon_warning = check_forecast_steps(forecast_steps, trained, max_forecast_steps)
+    if horizon_warning:
+        print(f"Warning: {horizon_warning}")
 
     # Load input data
     print(f"Loading input: {input}")
@@ -80,7 +87,10 @@ def predict(
     print(f"Elapsed: {elapsed:.2f}s")
 
     # Build output dataset, carrying over coordinates, grid mapping and valid times
-    ds_out = build_forecast_dataset(preds, da, ds, attrs={"source_file": str(input), "past_steps": past_steps})
+    extra = {"source_file": str(input), "past_steps": past_steps, "trained_forecast_steps": trained}
+    if horizon_warning:
+        extra["beyond_training_horizon"] = horizon_warning
+    ds_out = build_forecast_dataset(preds, da, ds, attrs=extra)
 
     ds_out.to_netcdf(output, encoding=NETCDF_ENCODING)
     print(f"Predictions saved to: {output}")
@@ -92,6 +102,7 @@ def serve(
     host: str = "0.0.0.0",
     port: int = 8000,
     device: str = "cpu",
+    max_forecast_steps: int | None = None,
 ):
     """
     Start the FastAPI inference server.
@@ -102,6 +113,7 @@ def serve(
         host: Host to bind to.
         port: Port to listen on.
         device: Device for inference ('cpu' or 'cuda').
+        max_forecast_steps: Cap on forecast_steps per request (env MAX_FORECAST_STEPS). Default: the trained horizon.
     """
     import os
 
@@ -110,6 +122,8 @@ def serve(
     if hub_repo is not None:
         os.environ["HF_REPO_ID"] = hub_repo
     os.environ.setdefault("DEVICE", device)
+    if max_forecast_steps is not None:
+        os.environ["MAX_FORECAST_STEPS"] = str(max_forecast_steps)
 
     import uvicorn
 

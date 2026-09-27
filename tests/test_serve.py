@@ -120,3 +120,24 @@ def test_predict_rejects_too_few_frames(client):
     resp = client.post("/predict?forecast_steps=12&ensemble_size=10", files=_upload(4))
     assert resp.status_code == 422
     assert "Need at least 6 timesteps, got 4" in resp.json()["detail"]
+
+
+def test_predict_rejects_steps_beyond_trained_horizon(client):
+    resp = client.post("/predict?forecast_steps=24&ensemble_size=2", files=_upload(6))
+    assert resp.status_code == 422
+    assert "above the allowed 12" in resp.json()["detail"]
+
+
+def test_predict_allows_beyond_horizon_when_cap_is_raised(mock_model, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("MAX_FORECAST_STEPS", "48")
+    with patch("convgru_ensemble.serve._load_model", return_value=mock_model):
+        from convgru_ensemble.serve import app
+
+        with TestClient(app) as c:
+            info = c.get("/model/info").json()
+            assert info["max_forecast_steps"] == 48
+            resp = c.post("/predict?forecast_steps=24&ensemble_size=2", files=_upload(6))
+    assert resp.status_code == 200, resp.text
+    assert "extrapolation" in resp.headers["X-Input-Messages"]

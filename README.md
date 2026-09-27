@@ -78,7 +78,7 @@ convgru-ensemble serve --hub-repo it4lia/irene --port 8000
 **Submit a forecast request:**
 
 ```bash
-# 4-hour forecast (4 steps × 1h) with 5 ensemble members
+# 20-minute forecast (4 steps × 5 min) with 5 ensemble members
 curl -X POST "http://localhost:8000/predict?forecast_steps=4&ensemble_size=5" \
     -F "file=@examples/sample_data.nc" \
     -o predictions.nc
@@ -118,7 +118,7 @@ grid get the grid mapping even when the input file has none.
 | `variable` | `RR` | Name of the rain rate variable in the NetCDF |
 | `units` | from the file | Input units, overriding the variable's `units` attribute |
 | `past_steps` | `6` | Past frames given to the model, taken from the end of the file (6 as in training) |
-| `forecast_steps` | `12` | Number of future 5-min steps (1–48, i.e. max 4h) |
+| `forecast_steps` | `12` | Number of future 5-min steps; capped at the trained horizon (12) unless the server is started with a higher `MAX_FORECAST_STEPS` |
 | `ensemble_size` | `10` | Number of ensemble members (1–10) |
 
 The input NetCDF must contain a 3D variable `(T, H, W)` with rain rate and at least `past_steps`
