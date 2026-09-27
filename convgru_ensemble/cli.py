@@ -3,8 +3,9 @@
 import time
 
 import fire
-import numpy as np
 import xarray as xr
+
+from .inputs import to_rain_rate_mm_h
 
 
 def _load_model(checkpoint: str | None = None, hub_repo: str | None = None, device: str = "cpu"):
@@ -26,6 +27,7 @@ def predict(
     checkpoint: str | None = None,
     hub_repo: str | None = None,
     variable: str = "RR",
+    units: str | None = None,
     forecast_steps: int = 12,
     ensemble_size: int = 10,
     device: str = "cpu",
@@ -39,6 +41,7 @@ def predict(
         checkpoint: Path to local .ckpt checkpoint file.
         hub_repo: HuggingFace Hub repo ID (e.g., 'it4lia/irene'). Alternative to --checkpoint.
         variable: Name of the rain rate variable in the NetCDF file.
+        units: Units of the input, overriding the file's 'units' attribute (e.g. 'mm/h', 'kg m-2 s-1').
         forecast_steps: Number of future timesteps to forecast.
         ensemble_size: Number of ensemble members to generate.
         device: Device for inference ('cpu' or 'cuda').
@@ -53,12 +56,15 @@ def predict(
         available = list(ds.data_vars)
         raise ValueError(f"Variable '{variable}' not found. Available: {available}")
 
-    data = ds[variable].values  # (T, H, W) or similar
-    if data.ndim != 3:
-        raise ValueError(f"Expected 3D data (T, H, W), got shape {data.shape}")
+    da = ds[variable]  # (T, H, W) or similar
+    if da.ndim != 3:
+        raise ValueError(f"Expected 3D data (T, H, W), got shape {da.shape}")
 
-    print(f"Input shape: {data.shape}")
-    past = data.astype(np.float32)
+    rain = to_rain_rate_mm_h(da, units=units)
+    for message in rain.messages:
+        print(f"Input: {message}")
+    print(f"Input shape: {rain.values.shape}, units: {rain.units}")
+    past = rain.values
 
     # Run inference
     t0 = time.perf_counter()

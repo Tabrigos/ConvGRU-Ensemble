@@ -12,6 +12,8 @@ import xarray as xr
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
+from .inputs import InputUnitsError, to_rain_rate_mm_h
+
 _model = None
 
 
@@ -74,6 +76,7 @@ async def model_info():
 async def predict(
     file: UploadFile = File(..., description="NetCDF file with rain rate data (T, H, W)"),  # noqa: B008
     variable: str = Query("RR", description="Name of the rain rate variable"),  # noqa: B008
+    units: str | None = Query(None, description="Input units, overriding the file's 'units' attribute"),  # noqa: B008
     forecast_steps: int = Query(12, ge=1, le=48, description="Number of future 5-min steps (max 48 = 4h)"),  # noqa: B008
     ensemble_size: int = Query(10, ge=1, le=10, description="Number of ensemble members (max 10)"),  # noqa: B008
 ):
@@ -149,15 +152,18 @@ async def predict(
             detail=f"Need at least 2 timesteps, got {da.shape[0]}.",
         )
 
-    data = da.values
-    if np.isinf(data).any():
+    try:
+        rain = to_rain_rate_mm_h(da, units=units)
+    except InputUnitsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if np.isinf(rain.values).any():
         raise HTTPException(
             status_code=422,
             detail="Input data contains Inf values.",
         )
 
     # Replace NaN with 0 (no rain) — common for masked radar pixels
-    past = np.nan_to_num(data, nan=0.0).astype(np.float32)
+    past = np.nan_to_num(rain.values, nan=0.0)
 
     # Run inference
     preds = _model.predict(past, forecast_steps=forecast_steps, ensemble_size=ensemble_size)
@@ -178,6 +184,8 @@ async def predict(
             "forecast_steps": forecast_steps,
             "ensemble_size": ensemble_size,
             "elapsed_seconds": f"{elapsed:.3f}",
+            "input_units": rain.units,
+            "input_messages": "; ".join(rain.messages),
         },
     )
 
@@ -197,5 +205,7 @@ async def predict(
         headers={
             "Content-Disposition": "attachment; filename=predictions.nc",
             "X-Elapsed-Seconds": f"{elapsed:.3f}",
+            "X-Input-Units": rain.units,
+            "X-Input-Messages": "; ".join(rain.messages),
         },
     )

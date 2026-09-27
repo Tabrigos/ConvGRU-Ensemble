@@ -109,10 +109,18 @@ print(ds.precipitation_forecast.shape)
 | Parameter | Default | Description |
 |---|---|---|
 | `variable` | `RR` | Name of the rain rate variable in the NetCDF |
+| `units` | from the file | Input units, overriding the variable's `units` attribute |
 | `forecast_steps` | `12` | Number of future 5-min steps (1–48, i.e. max 4h) |
 | `ensemble_size` | `10` | Number of ensemble members (1–10) |
 
-The input NetCDF must contain a 3D variable `(T, H, W)` with rain rate in mm/h and at least 2 timesteps.
+The input NetCDF must contain a 3D variable `(T, H, W)` with rain rate and at least 2 timesteps.
+The `units` attribute of the variable is read and the values are brought to mm/h: `mm/h`,
+`mm h-1` and `kg m-2 h-1` pass unchanged, `mm/s` and `kg m-2 s-1` are multiplied by 3600,
+unknown units are rejected. A missing attribute means mm/h. If the converted maximum is not
+plausible (above 1000 mm/h) the request is rejected, because the attribute is probably wrong:
+pass `units` explicitly in that case. The same applies to the CLI (`--units`). Negative values
+are treated as missing. What was assumed or converted is reported in the `X-Input-Units` and
+`X-Input-Messages` response headers and in the output attributes.
 
 </details>
 
