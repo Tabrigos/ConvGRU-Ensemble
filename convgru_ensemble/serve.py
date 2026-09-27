@@ -6,7 +6,6 @@ import tempfile
 import time
 from contextlib import asynccontextmanager
 
-import magic
 import numpy as np
 import xarray as xr
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
@@ -16,6 +15,20 @@ from .inputs import InputUnitsError, to_rain_rate_mm_h
 from .output import NETCDF_ENCODING, build_forecast_dataset
 
 _model = None
+
+# File signatures: NetCDF classic and 64-bit offset ("CDF\x01", "CDF\x02"), CDF-5 ("CDF\x05"),
+# and NetCDF4, which is an HDF5 file. Checked directly, so no libmagic is needed.
+_CLASSIC_SIGNATURES = (b"CDF\x01", b"CDF\x02", b"CDF\x05")
+_HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
+
+
+def netcdf_engine_for(content: bytes) -> str | None:
+    """Return the xarray engine able to read ``content``, or ``None`` if it is not NetCDF."""
+    if content[:8] == _HDF5_SIGNATURE:
+        return "h5netcdf"
+    if content[:4] in _CLASSIC_SIGNATURES:
+        return "scipy"
+    return None
 
 
 def _load_model():
@@ -100,15 +113,11 @@ async def predict(
             detail=f"File too large ({len(content) / 1024 / 1024:.0f} MB). Maximum is 100 MB.",
         )
 
-    mime = magic.from_buffer(content, mime=True)
-    if mime == "application/x-hdf5":
-        engine = "h5netcdf"
-    elif mime in ("application/x-netcdf", "application/octet-stream") and content[:3] == b"CDF":
-        engine = "scipy"
-    else:
+    engine = netcdf_engine_for(content)
+    if engine is None:
         raise HTTPException(
             status_code=422,
-            detail=f"Expected a NetCDF/HDF5 file, got '{mime}'.",
+            detail="Expected a NetCDF file (classic 'CDF' or NetCDF4/HDF5 signature not found).",
         )
     try:
         ds = xr.open_dataset(io.BytesIO(content), engine=engine)
