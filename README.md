@@ -96,7 +96,14 @@ import xarray as xr
 ds = xr.open_dataset("predictions.nc")
 print(ds.precipitation_forecast.shape)
 # (5, 4, 1400, 1200) — ensemble_member, forecast_step, y, x
+print(ds.forecast_time.values)  # valid time of each step, from the input time axis
+print(ds.crs.attrs["grid_mapping_name"])  # CF grid mapping copied from the input
 ```
+
+The output keeps the spatial coordinates of the input, its CF grid mapping
+(`crs`) and the valid times (`forecast_time`, `forecast_reference_time`), so
+it can be opened directly in GIS tools. Inputs on the Italian DPC 1 km radar
+grid get the grid mapping even when the input file has none.
 
 | Endpoint | Method | Description |
 |---|---|---|

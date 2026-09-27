@@ -12,6 +12,8 @@ import xarray as xr
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
+from .output import NETCDF_ENCODING, build_forecast_dataset
+
 _model = None
 
 
@@ -164,29 +166,12 @@ async def predict(
 
     elapsed = time.perf_counter() - t0
 
-    # Build output NetCDF
-    ds_out = xr.Dataset(
-        {
-            "precipitation_forecast": xr.DataArray(
-                data=preds,
-                dims=["ensemble_member", "forecast_step", "y", "x"],
-                attrs={"units": "mm/h", "long_name": "Ensemble precipitation forecast"},
-            ),
-        },
-        attrs={
-            "model": "ConvGRU-Ensemble",
-            "forecast_steps": forecast_steps,
-            "ensemble_size": ensemble_size,
-            "elapsed_seconds": f"{elapsed:.3f}",
-        },
-    )
+    # Build output NetCDF, carrying over coordinates, grid mapping and valid times
+    ds_out = build_forecast_dataset(preds, da, ds, attrs={"elapsed_seconds": f"{elapsed:.3f}"})
 
-    encoding = {
-        "precipitation_forecast": {"zlib": True, "complevel": 4},
-    }
     with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp_out:
         tmp_out_path = tmp_out.name
-    ds_out.to_netcdf(tmp_out_path, engine="netcdf4", encoding=encoding)
+    ds_out.to_netcdf(tmp_out_path, engine="netcdf4", encoding=NETCDF_ENCODING)
     with open(tmp_out_path, "rb") as fh:
         out_bytes = fh.read()
     os.unlink(tmp_out_path)

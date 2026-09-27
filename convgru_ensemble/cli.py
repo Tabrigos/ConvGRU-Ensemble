@@ -6,6 +6,8 @@ import fire
 import numpy as np
 import xarray as xr
 
+from .output import NETCDF_ENCODING, build_forecast_dataset
+
 
 def _load_model(checkpoint: str | None = None, hub_repo: str | None = None, device: str = "cpu"):
     """Load model from local checkpoint or HuggingFace Hub."""
@@ -67,24 +69,10 @@ def predict(
     print(f"Output shape: {preds.shape} (ensemble, time, H, W)")
     print(f"Elapsed: {elapsed:.2f}s")
 
-    # Build output dataset
-    ds_out = xr.Dataset(
-        {
-            "precipitation_forecast": xr.DataArray(
-                data=preds,
-                dims=["ensemble_member", "forecast_step", "y", "x"],
-                attrs={"units": "mm/h", "long_name": "Ensemble precipitation forecast"},
-            ),
-        },
-        attrs={
-            "model": "ConvGRU-Ensemble",
-            "forecast_steps": forecast_steps,
-            "ensemble_size": ensemble_size,
-            "source_file": str(input),
-        },
-    )
+    # Build output dataset, carrying over coordinates, grid mapping and valid times
+    ds_out = build_forecast_dataset(preds, ds[variable], ds, attrs={"source_file": str(input)})
 
-    ds_out.to_netcdf(output)
+    ds_out.to_netcdf(output, encoding=NETCDF_ENCODING)
     print(f"Predictions saved to: {output}")
 
 
