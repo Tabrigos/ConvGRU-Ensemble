@@ -196,6 +196,12 @@ Training is configured via [Fiddle](https://github.com/google/fiddle). Run with 
 uv run python -m convgru_ensemble.train
 ```
 
+Print the configuration without training (`--config config:experiment` is implied when omitted):
+
+```bash
+uv run python -m convgru_ensemble.train --print_config
+```
+
 Override parameters from the command line:
 
 ```bash
@@ -220,6 +226,10 @@ Monitor with TensorBoard: `uv run tensorboard --logdir logs/`
 | `model.masked_loss` | Mask NaN regions in loss | `True` |
 | `datamodule.steps` | Total timesteps per sample (past + future) | `18` |
 | `datamodule.batch_size` | Batch size | `16` |
+
+These are the defaults of `train.py`. The released model (IRENE) was trained with
+`model.ensemble_size=10` and `model.masked_loss=False`: see `MODEL_CARD.md`, whose
+values are read from the checkpoint.
 
 ## Architecture
 

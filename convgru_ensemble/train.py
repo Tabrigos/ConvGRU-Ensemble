@@ -290,7 +290,7 @@ def main(argv: list[str]) -> None:
         Command-line arguments (unused, consumed by ``absl``).
     """
     del argv
-    cfg = _CONFIG.value
+    cfg = _CONFIG.value if _CONFIG.value is not None else experiment()
     if FLAGS.print_config:
         print(printing.as_str_flattened(cfg))
         return

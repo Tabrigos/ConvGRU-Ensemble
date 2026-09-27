@@ -55,14 +55,22 @@ Trained on the Italian DPC (Dipartimento della Protezione Civile) radar mosaic s
 
 ## Training Procedure
 
-- **Optimizer**: Adam (lr=1e-4)
+Values read from the released checkpoint (`model.ckpt`, hyperparameters and
+training state), which differ in two points from the defaults of `train.py`:
+
+- **Optimizer**: Adam (lr=1e-4), ReduceLROnPlateau (factor 0.5, patience 10)
 - **Loss**: CRPS with temporal consistency penalty (lambda=0.01)
 - **Batch size**: 16
-- **Ensemble size during training**: 2 members
+- **Ensemble size during training**: 10 members (the `train.py` default is 2)
 - **Input window**: 6 past timesteps (30 min)
 - **Forecast horizon**: 12 future timesteps (60 min)
+- **Training samples**: 256 x 256 windows of the Italian mosaic
 - **Data augmentation**: Random rotations and flips
-- **NaN handling**: Masked loss for missing radar data
+- **NaN handling**: missing radar pixels are set to "no rain" and the loss is
+  **not** masked (`masked_loss=False`; the `train.py` default is `True`): the
+  model learns to predict no rain outside radar coverage
+- **Training length**: 39 epochs, 403,880 optimizer steps
+- **Architecture**: 5 encoder/decoder blocks, 64.2 M parameters
 
 ## Limitations
 
