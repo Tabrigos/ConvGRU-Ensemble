@@ -120,6 +120,7 @@ grid get the grid mapping even when the input file has none.
 | `past_steps` | `6` | Past frames given to the model, taken from the end of the file (6 as in training) |
 | `forecast_steps` | `12` | Number of future 5-min steps; capped at the trained horizon (12) unless the server is started with a higher `MAX_FORECAST_STEPS` |
 | `ensemble_size` | `10` | Number of ensemble members (1–10) |
+| `min_rain_rate` | `0.036` | Values at or below this (mm/h) are returned as 0; the default is the model's physical floor (0 dBZ), `0` disables |
 
 The input NetCDF must contain a 3D variable `(T, H, W)` with rain rate and at least `past_steps`
 timesteps; only the last `past_steps` frames are given to the model (the released model was trained

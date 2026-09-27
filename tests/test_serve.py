@@ -141,3 +141,12 @@ def test_predict_allows_beyond_horizon_when_cap_is_raised(mock_model, monkeypatc
             resp = c.post("/predict?forecast_steps=24&ensemble_size=2", files=_upload(6))
     assert resp.status_code == 200, resp.text
     assert "extrapolation" in resp.headers["X-Input-Messages"]
+
+
+def test_predict_applies_the_floor(client, mock_model):
+    mock_model.predict.return_value = np.full((2, 12, 8, 8), 0.036, dtype=np.float32)
+    resp = client.post("/predict?forecast_steps=12&ensemble_size=2", files=_upload(6))
+    assert resp.status_code == 200, resp.text
+    out = xr.open_dataset(io.BytesIO(resp.content), engine="h5netcdf")
+    assert float(out["precipitation_forecast"].max()) == 0.0
+    assert out.attrs["min_rain_rate"] == pytest.approx(0.0365, abs=1e-3)

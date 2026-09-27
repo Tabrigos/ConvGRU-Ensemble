@@ -7,7 +7,7 @@ import xarray as xr
 
 from .horizon import check_forecast_steps, trained_forecast_steps
 from .inputs import TRAINED_PAST_STEPS, select_past, to_rain_rate_mm_h
-from .output import NETCDF_ENCODING, build_forecast_dataset
+from .output import NETCDF_ENCODING, PHYSICAL_FLOOR_MM_H, apply_floor, build_forecast_dataset
 
 
 def _load_model(checkpoint: str | None = None, hub_repo: str | None = None, device: str = "cpu"):
@@ -34,6 +34,7 @@ def predict(
     forecast_steps: int = 12,
     max_forecast_steps: int | None = None,
     ensemble_size: int = 10,
+    min_rain_rate: float = PHYSICAL_FLOOR_MM_H,
     device: str = "cpu",
     output: str = "predictions.nc",
 ):
@@ -50,6 +51,7 @@ def predict(
         forecast_steps: Number of future timesteps to forecast (default 12, the trained horizon).
         max_forecast_steps: Cap on forecast_steps. Default is the trained horizon; raise it to extrapolate beyond.
         ensemble_size: Number of ensemble members to generate.
+        min_rain_rate: Values at or below this (mm/h) are written as 0. Default: the model's physical floor (~0.036); 0 disables.
         device: Device for inference ('cpu' or 'cuda').
         output: Path for the output NetCDF file.
     """
@@ -83,11 +85,17 @@ def predict(
     t0 = time.perf_counter()
     preds = model.predict(past, forecast_steps=forecast_steps, ensemble_size=ensemble_size)
     elapsed = time.perf_counter() - t0
+    preds = apply_floor(preds, min_rain_rate)
     print(f"Output shape: {preds.shape} (ensemble, time, H, W)")
     print(f"Elapsed: {elapsed:.2f}s")
 
     # Build output dataset, carrying over coordinates, grid mapping and valid times
-    extra = {"source_file": str(input), "past_steps": past_steps, "trained_forecast_steps": trained}
+    extra = {
+        "source_file": str(input),
+        "past_steps": past_steps,
+        "trained_forecast_steps": trained,
+        "min_rain_rate": min_rain_rate,
+    }
     if horizon_warning:
         extra["beyond_training_horizon"] = horizon_warning
     ds_out = build_forecast_dataset(preds, da, ds, attrs=extra)

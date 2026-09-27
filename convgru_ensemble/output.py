@@ -8,6 +8,8 @@ resulting NetCDF opens in the right place in GIS tools.
 import numpy as np
 import xarray as xr
 
+from .utils import reflectivity_to_rainrate
+
 # Grid mapping of the Italian DPC radar mosaic (IT-DPC-SRI dataset):
 # Transverse Mercator on WGS 84, origin 42N / 12.5E, scale factor 1,
 # no false easting/northing, 1 km cells, x in [-600, 600] km, y in [-750, 650] km.
@@ -43,6 +45,36 @@ _DPC_Y_RANGE = (-750_000.0, 650_000.0)
 _DPC_CELL = 1000.0
 
 DEFAULT_TIMESTEP = np.timedelta64(5, "m")
+
+# The model works in reflectivity clipped at 0 dBZ, which converts back to ~0.036 mm/h:
+# the forecast never contains an exact zero. Values at or below this floor mean "no rain".
+PHYSICAL_FLOOR_MM_H = float(reflectivity_to_rainrate(0.0))
+
+
+def apply_floor(preds: np.ndarray, min_rain_rate: float = PHYSICAL_FLOOR_MM_H) -> np.ndarray:
+    """
+    Set forecast values at or below ``min_rain_rate`` to zero.
+
+    Parameters
+    ----------
+    preds : np.ndarray
+        Forecast rain rate in mm/h.
+    min_rain_rate : float, optional
+        Threshold in mm/h. The default is the physical floor of the model
+        (0 dBZ converted to rain rate); ``0`` disables the floor.
+
+    Returns
+    -------
+    floored : np.ndarray
+        A copy with the small values set to zero, or ``preds`` itself when
+        ``min_rain_rate`` is ``0``.
+    """
+    if min_rain_rate < 0:
+        raise ValueError(f"min_rain_rate must be >= 0, got {min_rain_rate}")
+    if min_rain_rate == 0:
+        return preds
+    # Compare with a small margin so the floor itself, produced by float32 arithmetic, is caught.
+    return np.where(preds <= min_rain_rate * (1 + 1e-6), 0.0, preds).astype(preds.dtype, copy=False)
 
 
 def _spatial_dims(source: xr.DataArray) -> tuple[str, str]:

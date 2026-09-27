@@ -13,7 +13,7 @@ from fastapi.responses import Response
 
 from .horizon import HorizonError, check_forecast_steps, trained_forecast_steps
 from .inputs import TRAINED_PAST_STEPS, InputError, select_past, to_rain_rate_mm_h
-from .output import NETCDF_ENCODING, build_forecast_dataset
+from .output import NETCDF_ENCODING, PHYSICAL_FLOOR_MM_H, apply_floor, build_forecast_dataset
 
 _model = None
 _max_forecast_steps: int | None = None
@@ -105,6 +105,9 @@ async def predict(
         description="Number of future 5-min steps; capped at the trained horizon unless MAX_FORECAST_STEPS is set",
     ),
     ensemble_size: int = Query(10, ge=1, le=10, description="Number of ensemble members (max 10)"),  # noqa: B008
+    min_rain_rate: float = Query(  # noqa: B008
+        PHYSICAL_FLOOR_MM_H, ge=0, description="Values at or below this (mm/h) are returned as 0; 0 disables"
+    ),
 ):
     """
     Run ensemble nowcasting inference on uploaded NetCDF data.
@@ -194,6 +197,7 @@ async def predict(
 
     # Run inference
     preds = _model.predict(past, forecast_steps=forecast_steps, ensemble_size=ensemble_size)
+    preds = apply_floor(preds, min_rain_rate)
 
     elapsed = time.perf_counter() - t0
 
@@ -206,6 +210,7 @@ async def predict(
             "elapsed_seconds": f"{elapsed:.3f}",
             "past_steps": past_steps,
             "trained_forecast_steps": trained,
+            "min_rain_rate": min_rain_rate,
             **({"beyond_training_horizon": horizon_warning} if horizon_warning else {}),
             "input_units": rain.units,
             "input_messages": "; ".join(rain.messages),

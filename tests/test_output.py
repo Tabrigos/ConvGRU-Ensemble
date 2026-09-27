@@ -2,7 +2,15 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from convgru_ensemble.output import DPC_RADAR_GRID_MAPPING, NETCDF_ENCODING, build_forecast_dataset, forecast_times
+from convgru_ensemble.output import (
+    DPC_RADAR_GRID_MAPPING,
+    NETCDF_ENCODING,
+    PHYSICAL_FLOOR_MM_H,
+    apply_floor,
+    build_forecast_dataset,
+    forecast_times,
+)
+from convgru_ensemble.utils import normalized_to_rainrate
 
 
 def _dpc_window(t=6, h=8, w=10, with_time=True):
@@ -85,3 +93,24 @@ def test_netcdf_roundtrip_keeps_georeference(tmp_path):
     np.testing.assert_array_equal(back["forecast_time"].values, out["forecast_time"].values)
     assert back["crs"].attrs["crs_wkt"] == DPC_RADAR_GRID_MAPPING["crs_wkt"]
     assert back["precipitation_forecast"].encoding.get("zlib") is True
+
+
+def test_physical_floor_matches_the_model_minimum():
+    model_minimum = normalized_to_rainrate(np.array([-1.0], dtype=np.float32))[0]
+    assert abs(PHYSICAL_FLOOR_MM_H - 0.0365) < 1e-3
+    assert apply_floor(np.array([model_minimum], dtype=np.float32))[0] == 0.0
+
+
+def test_apply_floor_keeps_rain_and_dtype():
+    preds = np.array([0.0, 0.02, 0.05, 2.5], dtype=np.float32)
+    out = apply_floor(preds)
+    np.testing.assert_allclose(out, [0.0, 0.0, 0.05, 2.5], rtol=1e-6)
+    assert out.dtype == np.float32
+    np.testing.assert_allclose(apply_floor(preds, 0.1), [0.0, 0.0, 0.0, 2.5], rtol=1e-6)
+
+
+def test_apply_floor_can_be_disabled_or_rejected():
+    preds = np.array([0.02], dtype=np.float32)
+    assert apply_floor(preds, 0) is preds
+    with pytest.raises(ValueError):
+        apply_floor(preds, -1)
