@@ -33,11 +33,17 @@ _FACTORS = {
     "mmmin-1": 60.0,
 }
 
+TRAINED_PAST_STEPS = 6  # frames the released model (IRENE) was trained on: 6 x 5 min
+
 MAX_PLAUSIBLE_MM_H = 1000.0  # well above any radar estimate (60 dBZ is ~205 mm/h)
 LOW_MAX_MM_H = 0.5  # a field whose maximum is below this is either dry or in the wrong units
 
 
-class InputUnitsError(ValueError):
+class InputError(ValueError):
+    """The input cannot be used as it is."""
+
+
+class InputUnitsError(InputError):
     """The input units are unknown, or the converted values are not plausible."""
 
 
@@ -139,3 +145,33 @@ def to_rain_rate_mm_h(data: xr.DataArray | np.ndarray, units: str | None = None)
         messages.append("Input has no finite values.")
 
     return RainRateInput(values=values, units=units, factor=factor, messages=messages)
+
+
+def select_past(data: xr.DataArray, past_steps: int = TRAINED_PAST_STEPS) -> tuple[xr.DataArray, str | None]:
+    """
+    Keep the last ``past_steps`` frames of the input.
+
+    The model accepts sequences of any length, but its hidden state was
+    trained on a fixed number of frames: longer inputs degrade the forecast.
+
+    Returns
+    -------
+    selected : xr.DataArray
+        The last ``past_steps`` frames along the first dimension.
+    message : str or None
+        What was dropped, or ``None`` when the input had exactly ``past_steps`` frames.
+
+    Raises
+    ------
+    InputError
+        If the input has fewer frames than ``past_steps``.
+    """
+    if past_steps < 1:
+        raise InputError(f"past_steps must be at least 1, got {past_steps}.")
+    tdim = data.dims[0]
+    total = data.sizes[tdim]
+    if total < past_steps:
+        raise InputError(f"Need at least {past_steps} timesteps, got {total}.")
+    if total == past_steps:
+        return data, None
+    return data.isel({tdim: slice(total - past_steps, None)}), f"Using the last {past_steps} of {total} timesteps."

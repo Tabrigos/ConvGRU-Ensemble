@@ -117,10 +117,13 @@ grid get the grid mapping even when the input file has none.
 |---|---|---|
 | `variable` | `RR` | Name of the rain rate variable in the NetCDF |
 | `units` | from the file | Input units, overriding the variable's `units` attribute |
+| `past_steps` | `6` | Past frames given to the model, taken from the end of the file (6 as in training) |
 | `forecast_steps` | `12` | Number of future 5-min steps (1–48, i.e. max 4h) |
 | `ensemble_size` | `10` | Number of ensemble members (1–10) |
 
-The input NetCDF must contain a 3D variable `(T, H, W)` with rain rate and at least 2 timesteps.
+The input NetCDF must contain a 3D variable `(T, H, W)` with rain rate and at least `past_steps`
+timesteps; only the last `past_steps` frames are given to the model (the released model was trained
+on 6 frames, i.e. 30 minutes), longer files are cut and the CLI (`--past-steps`) and the API say so.
 The `units` attribute of the variable is read and the values are brought to mm/h: `mm/h`,
 `mm h-1` and `kg m-2 h-1` pass unchanged, `mm/s` and `kg m-2 s-1` are multiplied by 3600,
 unknown units are rejected. A missing attribute means mm/h. If the converted maximum is not

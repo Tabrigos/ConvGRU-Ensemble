@@ -52,7 +52,7 @@ def test_model_info(client):
 
 def test_predict_returns_netcdf(client):
     # Create a small NetCDF file in memory
-    ds = xr.Dataset({"RR": xr.DataArray(np.zeros((4, 8, 8), dtype=np.float32), dims=["time", "y", "x"])})
+    ds = xr.Dataset({"RR": xr.DataArray(np.zeros((9, 8, 8), dtype=np.float32), dims=["time", "y", "x"])})
     buf = io.BytesIO()
     ds.to_netcdf(buf, engine="scipy")
     buf.seek(0)
@@ -68,7 +68,7 @@ def test_predict_returns_netcdf(client):
 
 def test_predict_accepts_netcdf4(client, tmp_path):
     # NetCDF4 is an HDF5 file: it must be recognized without libmagic
-    ds = xr.Dataset({"RR": xr.DataArray(np.zeros((4, 8, 8), dtype=np.float32), dims=["time", "y", "x"])})
+    ds = xr.Dataset({"RR": xr.DataArray(np.zeros((9, 8, 8), dtype=np.float32), dims=["time", "y", "x"])})
     path = tmp_path / "input.nc"
     ds.to_netcdf(path, engine="netcdf4")
     with open(path, "rb") as fh:
@@ -92,3 +92,31 @@ def test_netcdf_engine_for_signatures():
     assert netcdf_engine_for(b"CDF\x05" + b"\0" * 8) == "scipy"
     assert netcdf_engine_for(b"PK\x03\x04") is None
     assert netcdf_engine_for(b"") is None
+
+
+def _upload(frames):
+    ds = xr.Dataset({"RR": xr.DataArray(np.zeros((frames, 8, 8), dtype=np.float32), dims=["time", "y", "x"])})
+    buf = io.BytesIO()
+    ds.to_netcdf(buf, engine="scipy")
+    buf.seek(0)
+    return {"file": ("input.nc", buf, "application/x-netcdf")}
+
+
+def test_predict_uses_last_six_frames_by_default(client, mock_model):
+    resp = client.post("/predict?forecast_steps=12&ensemble_size=10", files=_upload(9))
+    assert resp.status_code == 200, resp.text
+    past = mock_model.predict.call_args.args[0]
+    assert past.shape == (6, 8, 8)
+    assert "last 6 of 9" in resp.headers["X-Input-Messages"]
+
+
+def test_predict_past_steps_can_be_changed(client, mock_model):
+    resp = client.post("/predict?forecast_steps=12&ensemble_size=10&past_steps=4", files=_upload(9))
+    assert resp.status_code == 200, resp.text
+    assert mock_model.predict.call_args.args[0].shape == (4, 8, 8)
+
+
+def test_predict_rejects_too_few_frames(client):
+    resp = client.post("/predict?forecast_steps=12&ensemble_size=10", files=_upload(4))
+    assert resp.status_code == 422
+    assert "Need at least 6 timesteps, got 4" in resp.json()["detail"]

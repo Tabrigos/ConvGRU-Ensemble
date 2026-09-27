@@ -5,7 +5,7 @@ import time
 import fire
 import xarray as xr
 
-from .inputs import to_rain_rate_mm_h
+from .inputs import TRAINED_PAST_STEPS, select_past, to_rain_rate_mm_h
 from .output import NETCDF_ENCODING, build_forecast_dataset
 
 
@@ -29,6 +29,7 @@ def predict(
     hub_repo: str | None = None,
     variable: str = "RR",
     units: str | None = None,
+    past_steps: int = TRAINED_PAST_STEPS,
     forecast_steps: int = 12,
     ensemble_size: int = 10,
     device: str = "cpu",
@@ -43,6 +44,7 @@ def predict(
         hub_repo: HuggingFace Hub repo ID (e.g., 'it4lia/irene'). Alternative to --checkpoint.
         variable: Name of the rain rate variable in the NetCDF file.
         units: Units of the input, overriding the file's 'units' attribute (e.g. 'mm/h', 'kg m-2 s-1').
+        past_steps: Number of past frames given to the model, taken from the end of the file (default 6, as in training).
         forecast_steps: Number of future timesteps to forecast.
         ensemble_size: Number of ensemble members to generate.
         device: Device for inference ('cpu' or 'cuda').
@@ -61,6 +63,9 @@ def predict(
     if da.ndim != 3:
         raise ValueError(f"Expected 3D data (T, H, W), got shape {da.shape}")
 
+    da, dropped = select_past(da, past_steps)
+    if dropped:
+        print(f"Input: {dropped}")
     rain = to_rain_rate_mm_h(da, units=units)
     for message in rain.messages:
         print(f"Input: {message}")
@@ -75,7 +80,7 @@ def predict(
     print(f"Elapsed: {elapsed:.2f}s")
 
     # Build output dataset, carrying over coordinates, grid mapping and valid times
-    ds_out = build_forecast_dataset(preds, ds[variable], ds, attrs={"source_file": str(input)})
+    ds_out = build_forecast_dataset(preds, da, ds, attrs={"source_file": str(input), "past_steps": past_steps})
 
     ds_out.to_netcdf(output, encoding=NETCDF_ENCODING)
     print(f"Predictions saved to: {output}")

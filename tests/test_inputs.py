@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from convgru_ensemble.inputs import InputUnitsError, factor_to_mm_h, to_rain_rate_mm_h
+from convgru_ensemble.inputs import InputError, InputUnitsError, factor_to_mm_h, select_past, to_rain_rate_mm_h
 
 
 def _field(values, units=None):
@@ -83,3 +83,25 @@ def test_nan_is_preserved_and_dry_input_is_flagged():
 def test_plain_array_input():
     out = to_rain_rate_mm_h(np.array([[[0.01]]]), units="mm/s")
     assert out.values.ravel()[0] == pytest.approx(36.0)
+
+
+def _frames(n):
+    return xr.DataArray(np.arange(n, dtype=np.float32)[:, None, None], dims=["time", "y", "x"])
+
+
+def test_select_past_keeps_the_last_frames():
+    selected, message = select_past(_frames(54), 6)
+    np.testing.assert_array_equal(selected.values.ravel(), np.arange(48, 54))
+    assert message == "Using the last 6 of 54 timesteps."
+
+
+def test_select_past_exact_length_is_silent():
+    selected, message = select_past(_frames(6), 6)
+    assert selected.sizes["time"] == 6 and message is None
+
+
+def test_select_past_rejects_short_input():
+    with pytest.raises(InputError, match="Need at least 6 timesteps, got 4"):
+        select_past(_frames(4), 6)
+    with pytest.raises(InputError):
+        select_past(_frames(4), 0)
