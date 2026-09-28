@@ -88,6 +88,22 @@ curl -X POST http://localhost:8000/predict \
     -F "file=@examples/sample_data.nc" -o predictions.nc
 ```
 
+**Derived products (mean, percentiles, probability of exceedance, accumulations):**
+
+```bash
+convgru-ensemble products --input predictions.nc --output products.nc \
+    --thresholds 1,5,20 --percentiles 10,50,90 --accumulations 30,60 \
+    --geotiff-dir products_tif   # optional, needs: uv sync --extra geo
+```
+
+`products.nc` holds `rain_rate_mean`, `rain_rate_median`, `rain_rate_spread`,
+`rain_rate_percentile`, `probability_exceeding` (0-1, per threshold) and
+`accumulation_mean` / `accumulation_percentile` (mm, per window), on the input
+grid with its georeference. With `--geotiff-dir` each product is also written as a
+tiled, compressed GeoTIFF with overviews, one band per forecast step (e.g.
+`probability_exceeding_5mm_h.tif`, `accumulation_mean_60min.tif`), ready for QGIS
+or a web map.
+
 **Read the predictions:**
 
 ```python

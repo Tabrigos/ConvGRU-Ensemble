@@ -40,6 +40,9 @@ serve = [
     "uvicorn>=0.34.0",
     "python-multipart>=0.0.18",
 ]
+geo = [
+    "rasterio>=1.4",
+]
 
 [project.scripts]
 convgru-ensemble = "convgru_ensemble.cli:main"

@@ -8,6 +8,7 @@ import xarray as xr
 from .horizon import check_forecast_steps, trained_forecast_steps
 from .inputs import TRAINED_PAST_STEPS, select_past, to_rain_rate_mm_h
 from .output import NETCDF_ENCODING, PHYSICAL_FLOOR_MM_H, apply_floor, build_forecast_dataset
+from .products import DEFAULT_ACCUMULATIONS_MIN, DEFAULT_PERCENTILES, DEFAULT_THRESHOLDS_MM_H, ensemble_products
 
 
 def _load_model(checkpoint: str | None = None, hub_repo: str | None = None, device: str = "cpu"):
@@ -104,6 +105,59 @@ def predict(
     print(f"Predictions saved to: {output}")
 
 
+def _numbers(value) -> tuple[float, ...]:
+    """Parse '1,5,20' (or a fire-parsed list/tuple/number) into a tuple of floats; empty means none."""
+    if value is None or value == "" or value == ():
+        return ()
+    if isinstance(value, (int, float)):
+        return (float(value),)
+    if isinstance(value, str):
+        return tuple(float(v) for v in value.split(",") if v.strip())
+    return tuple(float(v) for v in value)
+
+
+def products(
+    input: str,
+    output: str = "products.nc",
+    geotiff_dir: str | None = None,
+    thresholds: str | tuple = DEFAULT_THRESHOLDS_MM_H,
+    percentiles: str | tuple = DEFAULT_PERCENTILES,
+    accumulations: str | tuple = DEFAULT_ACCUMULATIONS_MIN,
+):
+    """
+    Summarize an ensemble forecast into products: mean, median, spread, percentiles,
+    probability of exceedance and accumulations, as NetCDF and optionally GeoTIFF.
+
+    Args:
+        input: Forecast NetCDF written by `predict` (or by the API).
+        output: Path for the products NetCDF.
+        geotiff_dir: If given, also write one GeoTIFF per product (needs the 'geo' extra).
+        thresholds: Rain rates in mm/h for the probability of exceedance, e.g. '1,5,20'. Empty string disables.
+        percentiles: Percentiles of the ensemble (0-100), e.g. '10,50,90'. Empty string disables.
+        accumulations: Accumulation windows in minutes from the first step, e.g. '30,60'. Empty string disables.
+    """
+    print(f"Loading forecast: {input}")
+    forecast = xr.open_dataset(input)
+    t0 = time.perf_counter()
+    result = ensemble_products(
+        forecast,
+        thresholds=_numbers(thresholds),
+        percentiles=_numbers(percentiles),
+        accumulations_min=_numbers(accumulations),
+    )
+    print(f"Products: {', '.join(v for v in result.data_vars if v != 'crs')} ({time.perf_counter() - t0:.2f}s)")
+
+    encoding = {name: {"zlib": True, "complevel": 4} for name in result.data_vars if name != "crs"}
+    result.to_netcdf(output, encoding=encoding)
+    print(f"Products saved to: {output}")
+
+    if geotiff_dir:
+        from .geotiff import write_products_geotiffs
+
+        paths = write_products_geotiffs(result, geotiff_dir)
+        print(f"GeoTIFF: {len(paths)} files in {geotiff_dir}")
+
+
 def serve(
     checkpoint: str | None = None,
     hub_repo: str | None = None,
@@ -139,7 +193,7 @@ def serve(
 
 
 def main():
-    fire.Fire({"predict": predict, "serve": serve})
+    fire.Fire({"predict": predict, "products": products, "serve": serve})
 
 
 if __name__ == "__main__":

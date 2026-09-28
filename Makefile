@@ -1,7 +1,7 @@
 .PHONY: install lint test serve docker-build docker-run
 
 install:
-	uv sync --all-groups --extra serve
+	uv sync --all-groups --extra serve --extra geo
 
 lint:
 	uv run ruff check .
