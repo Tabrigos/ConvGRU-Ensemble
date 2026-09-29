@@ -1,23 +1,38 @@
 """FastAPI inference server for ConvGRU-Ensemble nowcasting model."""
 
 import io
+import logging
 import os
 import tempfile
 import time
+import uuid
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 
 import numpy as np
 import xarray as xr
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 
 from .horizon import HorizonError, check_forecast_steps, trained_forecast_steps
 from .inputs import TRAINED_PAST_STEPS, InputError, select_past, to_rain_rate_mm_h
+from .logging_config import configure_logging
 from .output import PHYSICAL_FLOOR_MM_H, apply_floor, build_forecast_dataset
 from .products import DEFAULT_ACCUMULATIONS_MIN, DEFAULT_PERCENTILES, DEFAULT_THRESHOLDS_MM_H, ensemble_products
 
+log = logging.getLogger("convgru_ensemble.serve")
+
 _model = None
 _max_forecast_steps: int | None = None
+_model_source: dict = {}
+
+
+def package_version() -> str:
+    try:
+        return version("convgru-ensemble")
+    except PackageNotFoundError:  # pragma: no cover - running from a plain checkout
+        return "unknown"
+
 
 # File signatures: NetCDF classic and 64-bit offset ("CDF\x01", "CDF\x02"), CDF-5 ("CDF\x05"),
 # and NetCDF4, which is an HDF5 file. Checked directly, so no libmagic is needed.
@@ -43,20 +58,41 @@ def _load_model():
     hub_repo = os.environ.get("HF_REPO_ID")
     revision = os.environ.get("HF_REVISION") or None
 
+    global _model_source
+    t0 = time.perf_counter()
     if weights:
-        from .weights import load_weights
+        from .weights import load_weights, sha256_of
 
-        return load_weights(weights, device=device)
-    if hub_repo:
-        return RadarLightningModel.from_pretrained(hub_repo, device=device, revision=revision)
-    if checkpoint:
-        return RadarLightningModel.from_checkpoint(checkpoint, device=device)
-    raise RuntimeError("Set MODEL_WEIGHTS, MODEL_CHECKPOINT or HF_REPO_ID environment variable.")
+        model = load_weights(weights, device=device)
+        _model_source = {"kind": "safetensors", "path": weights, "sha256": sha256_of(weights)}
+    elif hub_repo:
+        model = RadarLightningModel.from_pretrained(hub_repo, device=device, revision=revision)
+        _model_source = {"kind": "hub", "repo": hub_repo, "revision": revision or "main"}
+    elif checkpoint:
+        from .weights import sha256_of
+
+        model = RadarLightningModel.from_checkpoint(checkpoint, device=device)
+        _model_source = {"kind": "checkpoint", "path": checkpoint, "sha256": sha256_of(checkpoint)}
+    else:
+        raise RuntimeError("Set MODEL_WEIGHTS, MODEL_CHECKPOINT or HF_REPO_ID environment variable.")
+    _model_source["device"] = device
+    log.info(
+        "model loaded",
+        extra={
+            **_model_source,
+            "load_seconds": round(time.perf_counter() - t0, 3),
+            "parameters": sum(p.numel() for p in model.parameters()),
+            "num_blocks": model.hparams.num_blocks,
+            "forecast_steps": model.hparams.forecast_steps,
+        },
+    )
+    return model
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _model, _max_forecast_steps
+    configure_logging()
     _model = _load_model()
     cap = os.environ.get("MAX_FORECAST_STEPS")
     _max_forecast_steps = int(cap) if cap else None
@@ -72,10 +108,43 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """One log line per request, with a request id taken from X-Request-ID or generated."""
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception(
+            "request failed",
+            extra={"request_id": request_id, "method": request.method, "path": request.url.path},
+        )
+        raise
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+    response.headers["X-Request-ID"] = request_id
+    log.info(
+        "request",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "elapsed_ms": elapsed_ms,
+        },
+    )
+    return response
+
+
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "ok", "model_loaded": _model is not None}
+    """Health check: service status, package version and where the model comes from."""
+    return {
+        "status": "ok",
+        "model_loaded": _model is not None,
+        "version": package_version(),
+        "model": _model_source,
+    }
 
 
 @app.get("/model/info")

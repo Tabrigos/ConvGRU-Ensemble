@@ -123,7 +123,7 @@ grid get the grid mapping even when the input file has none.
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/health` | GET | Health check |
+| `/health` | GET | Status, package version and the model source (kind, path or repo, revision, sha256) |
 | `/model/info` | GET | Model metadata and hyperparameters |
 | `/predict` | POST | Upload NetCDF, get ensemble forecast as NetCDF |
 | `/products` | POST | Same input as `/predict`; returns the summary products (mean, percentiles, probability of exceedance, accumulations) as NetCDF. Extra query parameters `thresholds`, `percentiles`, `accumulations` as comma-separated lists |
@@ -138,6 +138,11 @@ grid get the grid mapping even when the input file has none.
 | `forecast_steps` | `12` | Number of future 5-min steps; capped at the trained horizon (12) unless the server is started with a higher `MAX_FORECAST_STEPS` |
 | `ensemble_size` | `10` | Number of ensemble members (1–10) |
 | `min_rain_rate` | `0.036` | Values at or below this (mm/h) are returned as 0; the default is the model's physical floor (0 dBZ), `0` disables |
+
+Every request is logged on one line with a request id (taken from the `X-Request-ID`
+header when present, otherwise generated and returned in the same header), the
+method, path, status and elapsed time. `LOG_FORMAT=json` switches to one JSON object per
+line for log collectors; `LOG_LEVEL` sets the level (default `INFO`).
 
 The input NetCDF must contain a 3D variable `(T, H, W)` with rain rate and at least `past_steps`
 timesteps; only the last `past_steps` frames are given to the model (the released model was trained

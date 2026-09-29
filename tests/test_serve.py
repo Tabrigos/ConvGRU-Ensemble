@@ -40,6 +40,31 @@ def test_health(client):
     data = resp.json()
     assert data["status"] == "ok"
     assert data["model_loaded"] is True
+    assert data["version"] and data["version"] != ""
+    assert isinstance(data["model"], dict)
+
+
+def test_requests_carry_a_request_id(client):
+    resp = client.get("/health", headers={"X-Request-ID": "trace-42"})
+    assert resp.headers["X-Request-ID"] == "trace-42"
+    resp = client.get("/health")
+    assert len(resp.headers["X-Request-ID"]) == 32
+
+
+def test_health_reports_the_model_source(mock_model, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    weights = tmp_path / "model.safetensors"
+    weights.write_bytes(b"not really weights")
+    monkeypatch.setenv("MODEL_WEIGHTS", str(weights))
+    with patch("convgru_ensemble.weights.load_weights", return_value=mock_model):
+        from convgru_ensemble.serve import app
+
+        with TestClient(app) as c:
+            data = c.get("/health").json()
+    assert data["model"]["kind"] == "safetensors"
+    assert data["model"]["path"] == str(weights)
+    assert len(data["model"]["sha256"]) == 64
 
 
 def test_model_info(client):
