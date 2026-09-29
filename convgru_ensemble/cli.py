@@ -11,24 +11,36 @@ from .output import NETCDF_ENCODING, PHYSICAL_FLOOR_MM_H, apply_floor, build_for
 from .products import DEFAULT_ACCUMULATIONS_MIN, DEFAULT_PERCENTILES, DEFAULT_THRESHOLDS_MM_H, ensemble_products
 
 
-def _load_model(checkpoint: str | None = None, hub_repo: str | None = None, device: str = "cpu"):
-    """Load model from local checkpoint or HuggingFace Hub."""
+def _load_model(
+    checkpoint: str | None = None,
+    hub_repo: str | None = None,
+    device: str = "cpu",
+    hub_revision: str | None = None,
+    weights: str | None = None,
+):
+    """Load the model from safetensors weights, a local checkpoint or HuggingFace Hub."""
     from .lightning_model import RadarLightningModel
 
+    if weights is not None:
+        print(f"Loading model from safetensors: {weights}")
+        from .weights import load_weights
+
+        return load_weights(weights, device=device)
     if hub_repo is not None:
-        print(f"Loading model from HuggingFace Hub: {hub_repo}")
-        return RadarLightningModel.from_pretrained(hub_repo, device=device)
-    elif checkpoint is not None:
+        print(f"Loading model from HuggingFace Hub: {hub_repo}" + (f" @ {hub_revision}" if hub_revision else ""))
+        return RadarLightningModel.from_pretrained(hub_repo, device=device, revision=hub_revision)
+    if checkpoint is not None:
         print(f"Loading model from checkpoint: {checkpoint}")
         return RadarLightningModel.from_checkpoint(checkpoint, device=device)
-    else:
-        raise ValueError("Either --checkpoint or --hub-repo must be provided.")
+    raise ValueError("One of --weights, --checkpoint or --hub-repo must be provided.")
 
 
 def predict(
     input: str,
     checkpoint: str | None = None,
     hub_repo: str | None = None,
+    hub_revision: str | None = None,
+    weights: str | None = None,
     variable: str = "RR",
     units: str | None = None,
     past_steps: int = TRAINED_PAST_STEPS,
@@ -46,6 +58,8 @@ def predict(
         input: Path to input NetCDF file with rain rate data (T, H, W) or (T, Y, X).
         checkpoint: Path to local .ckpt checkpoint file.
         hub_repo: HuggingFace Hub repo ID (e.g., 'it4lia/irene'). Alternative to --checkpoint.
+        hub_revision: Git revision of the Hub repo (branch, tag or commit sha); pin a sha in production.
+        weights: Path to model.safetensors (config.json next to it). Loads without unpickling anything.
         variable: Name of the rain rate variable in the NetCDF file.
         units: Units of the input, overriding the file's 'units' attribute (e.g. 'mm/h', 'kg m-2 s-1').
         past_steps: Number of past frames given to the model, taken from the end of the file (default 6, as in training).
@@ -56,7 +70,7 @@ def predict(
         device: Device for inference ('cpu' or 'cuda').
         output: Path for the output NetCDF file.
     """
-    model = _load_model(checkpoint, hub_repo, device)
+    model = _load_model(checkpoint, hub_repo, device, hub_revision, weights)
     trained = trained_forecast_steps(model)
     horizon_warning = check_forecast_steps(forecast_steps, trained, max_forecast_steps)
     if horizon_warning:
@@ -158,9 +172,46 @@ def products(
         print(f"GeoTIFF: {len(paths)} files in {geotiff_dir}")
 
 
+def export_weights(
+    output: str,
+    checkpoint: str | None = None,
+    hub_repo: str | None = None,
+    hub_revision: str | None = None,
+):
+    """
+    Convert a Lightning checkpoint to model.safetensors + config.json.
+
+    This is the one step that unpickles the checkpoint: run it once on a
+    checkpoint you trust, then serve from the exported weights (--weights /
+    MODEL_WEIGHTS), which load without executing anything.
+
+    Args:
+        output: Directory to write model.safetensors and config.json into.
+        checkpoint: Path to a local .ckpt checkpoint file.
+        hub_repo: HuggingFace Hub repo ID to download the checkpoint from. Alternative to --checkpoint.
+        hub_revision: Git revision of the Hub repo (branch, tag or commit sha).
+    """
+    from huggingface_hub import hf_hub_download
+
+    from .weights import export_checkpoint
+
+    if checkpoint is None and hub_repo is None:
+        raise ValueError("Either --checkpoint or --hub-repo must be provided.")
+    if checkpoint is None:
+        print(
+            f"Downloading checkpoint from HuggingFace Hub: {hub_repo}" + (f" @ {hub_revision}" if hub_revision else "")
+        )
+        checkpoint = hf_hub_download(repo_id=hub_repo, filename="model.ckpt", revision=hub_revision)
+    weights_path, config_path = export_checkpoint(checkpoint, output)
+    print(f"Weights saved to: {weights_path}")
+    print(f"Config saved to: {config_path}")
+
+
 def serve(
     checkpoint: str | None = None,
     hub_repo: str | None = None,
+    hub_revision: str | None = None,
+    weights: str | None = None,
     host: str = "0.0.0.0",
     port: int = 8000,
     device: str = "cpu",
@@ -172,6 +223,8 @@ def serve(
     Args:
         checkpoint: Path to local .ckpt checkpoint file.
         hub_repo: HuggingFace Hub repo ID (e.g., 'it4lia/irene'). Alternative to --checkpoint.
+        hub_revision: Git revision of the Hub repo (branch, tag or commit sha); env HF_REVISION.
+        weights: Path to model.safetensors (config.json next to it); env MODEL_WEIGHTS. Takes precedence.
         host: Host to bind to.
         port: Port to listen on.
         device: Device for inference ('cpu' or 'cuda').
@@ -183,6 +236,10 @@ def serve(
         os.environ["MODEL_CHECKPOINT"] = checkpoint
     if hub_repo is not None:
         os.environ["HF_REPO_ID"] = hub_repo
+    if hub_revision is not None:
+        os.environ["HF_REVISION"] = hub_revision
+    if weights is not None:
+        os.environ["MODEL_WEIGHTS"] = weights
     os.environ.setdefault("DEVICE", device)
     if max_forecast_steps is not None:
         os.environ["MAX_FORECAST_STEPS"] = str(max_forecast_steps)
@@ -193,7 +250,7 @@ def serve(
 
 
 def main():
-    fire.Fire({"predict": predict, "products": products, "serve": serve})
+    fire.Fire({"predict": predict, "products": products, "serve": serve, "export-weights": export_weights})
 
 
 if __name__ == "__main__":

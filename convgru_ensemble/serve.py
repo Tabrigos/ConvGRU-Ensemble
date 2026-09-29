@@ -38,15 +38,20 @@ def _load_model():
     from .lightning_model import RadarLightningModel
 
     device = os.environ.get("DEVICE", "cpu")
+    weights = os.environ.get("MODEL_WEIGHTS")
     checkpoint = os.environ.get("MODEL_CHECKPOINT")
     hub_repo = os.environ.get("HF_REPO_ID")
+    revision = os.environ.get("HF_REVISION") or None
 
+    if weights:
+        from .weights import load_weights
+
+        return load_weights(weights, device=device)
     if hub_repo:
-        return RadarLightningModel.from_pretrained(hub_repo, device=device)
-    elif checkpoint:
+        return RadarLightningModel.from_pretrained(hub_repo, device=device, revision=revision)
+    if checkpoint:
         return RadarLightningModel.from_checkpoint(checkpoint, device=device)
-    else:
-        raise RuntimeError("Set MODEL_CHECKPOINT or HF_REPO_ID environment variable.")
+    raise RuntimeError("Set MODEL_WEIGHTS, MODEL_CHECKPOINT or HF_REPO_ID environment variable.")
 
 
 @asynccontextmanager
