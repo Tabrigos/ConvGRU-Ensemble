@@ -513,16 +513,12 @@ dependencies = [
     { name = "h5py" },
     { name = "huggingface-hub" },
     { name = "importlib-resources" },
-    { name = "jupyterlab" },
-    { name = "matplotlib" },
     { name = "netcdf4" },
     { name = "numpy" },
     { name = "pandas" },
-    { name = "pysteps" },
     { name = "pytorch-lightning" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "tensorboard" },
     { name = "torch" },
     { name = "torchvision" },
     { name = "tqdm" },
@@ -538,6 +534,12 @@ serve = [
     { name = "fastapi" },
     { name = "python-multipart" },
     { name = "uvicorn" },
+]
+train = [
+    { name = "jupyterlab" },
+    { name = "matplotlib" },
+    { name = "pysteps" },
+    { name = "tensorboard" },
 ]
 
 [package.dev-dependencies]
@@ -559,18 +561,18 @@ requires-dist = [
     { name = "h5py", specifier = ">=3.15.1" },
     { name = "huggingface-hub", specifier = ">=0.27.0" },
     { name = "importlib-resources", specifier = ">=6.5.2" },
-    { name = "jupyterlab", specifier = ">=4.5.5" },
-    { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "jupyterlab", marker = "extra == 'train'", specifier = ">=4.5.5" },
+    { name = "matplotlib", marker = "extra == 'train'", specifier = ">=3.10.8" },
     { name = "netcdf4", specifier = ">=1.7.0" },
     { name = "numpy", specifier = ">=2.3.5" },
     { name = "pandas", specifier = ">=2.3.3" },
-    { name = "pysteps", specifier = ">=1.19.0" },
+    { name = "pysteps", marker = "extra == 'train'", specifier = ">=1.19.0" },
     { name = "python-multipart", marker = "extra == 'serve'", specifier = ">=0.0.18" },
     { name = "pytorch-lightning", specifier = ">=2.6.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rasterio", marker = "extra == 'geo'", specifier = ">=1.4" },
     { name = "safetensors", specifier = ">=0.4" },
-    { name = "tensorboard", specifier = ">=2.20.0" },
+    { name = "tensorboard", marker = "extra == 'train'", specifier = ">=2.20.0" },
     { name = "torch", specifier = ">=2.9.1" },
     { name = "torchvision", specifier = ">=0.24.1" },
     { name = "tqdm", specifier = ">=4.67.1" },
@@ -578,7 +580,7 @@ requires-dist = [
     { name = "xarray", specifier = ">=2025.12.0" },
     { name = "zarr", specifier = ">=3.1.5" },
 ]
-provides-extras = ["serve", "geo"]
+provides-extras = ["serve", "geo", "train"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -15,16 +15,12 @@ dependencies = [
     "fiddle>=0.3.0",
     "fire>=0.7.1",
     "importlib-resources>=6.5.2",
-    "jupyterlab>=4.5.5",
-    "matplotlib>=3.10.8",
     "numpy>=2.3.5",
     "netCDF4>=1.7.0",
     "pandas>=2.3.3",
-    "pysteps>=1.19.0",
     "pytorch-lightning>=2.6.0",
     "pyyaml>=6.0.3",
     "tqdm>=4.67.1",
-    "tensorboard>=2.20.0",
     "torch>=2.9.1",
     "torchvision>=0.24.1",
     "xarray>=2025.12.0",
@@ -43,6 +39,12 @@ serve = [
 ]
 geo = [
     "rasterio>=1.4",
+]
+train = [
+    "jupyterlab>=4.5.5",
+    "matplotlib>=3.10.8",
+    "pysteps>=1.19.0",
+    "tensorboard>=2.20.0",
 ]
 
 [project.scripts]
