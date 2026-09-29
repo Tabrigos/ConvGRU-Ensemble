@@ -126,6 +126,7 @@ grid get the grid mapping even when the input file has none.
 | `/health` | GET | Health check |
 | `/model/info` | GET | Model metadata and hyperparameters |
 | `/predict` | POST | Upload NetCDF, get ensemble forecast as NetCDF |
+| `/products` | POST | Same input as `/predict`; returns the summary products (mean, percentiles, probability of exceedance, accumulations) as NetCDF. Extra query parameters `thresholds`, `percentiles`, `accumulations` as comma-separated lists |
 
 **`/predict` query parameters:**
 

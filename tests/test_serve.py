@@ -150,3 +150,27 @@ def test_predict_applies_the_floor(client, mock_model):
     out = xr.open_dataset(io.BytesIO(resp.content), engine="h5netcdf")
     assert float(out["precipitation_forecast"].max()) == 0.0
     assert out.attrs["min_rain_rate"] == pytest.approx(0.0365, abs=1e-3)
+
+
+def test_products_endpoint_returns_summaries(client, mock_model):
+    rng = np.random.default_rng(1)
+    mock_model.predict.return_value = (rng.random((10, 12, 8, 8), dtype=np.float32) * 10).astype(np.float32)
+    resp = client.post("/products?forecast_steps=12&ensemble_size=10&thresholds=1,5&percentiles=90", files=_upload(6))
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/x-netcdf"
+    assert "products.nc" in resp.headers["content-disposition"]
+    out = xr.open_dataset(io.BytesIO(resp.content), engine="h5netcdf")
+    assert "precipitation_forecast" not in out
+    assert out["rain_rate_mean"].shape == (12, 8, 8)
+    assert list(out["threshold"].values) == [1.0, 5.0]
+    assert list(out["percentile"].values) == [90]
+    assert list(out["accumulation"].values) == [30, 60]
+    assert float(out["probability_exceeding"].max()) <= 1.0
+    assert out.attrs["ensemble_size"] == 10 and out.attrs["past_steps"] == 6
+
+
+def test_products_endpoint_rejects_bad_lists(client):
+    resp = client.post("/products?thresholds=1;5", files=_upload(6))
+    assert resp.status_code == 422
+    resp = client.post("/products?percentiles=150", files=_upload(6))
+    assert resp.status_code == 422

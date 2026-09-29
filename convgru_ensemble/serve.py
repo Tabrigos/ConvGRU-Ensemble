@@ -8,12 +8,13 @@ from contextlib import asynccontextmanager
 
 import numpy as np
 import xarray as xr
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from .horizon import HorizonError, check_forecast_steps, trained_forecast_steps
 from .inputs import TRAINED_PAST_STEPS, InputError, select_past, to_rain_rate_mm_h
-from .output import NETCDF_ENCODING, PHYSICAL_FLOOR_MM_H, apply_floor, build_forecast_dataset
+from .output import PHYSICAL_FLOOR_MM_H, apply_floor, build_forecast_dataset
+from .products import DEFAULT_ACCUMULATIONS_MIN, DEFAULT_PERCENTILES, DEFAULT_THRESHOLDS_MM_H, ensemble_products
 
 _model = None
 _max_forecast_steps: int | None = None
@@ -91,9 +92,7 @@ async def model_info():
     }
 
 
-@app.post("/predict")
-async def predict(
-    file: UploadFile = File(..., description="NetCDF file with rain rate data (T, H, W)"),  # noqa: B008
+def forecast_params(
     variable: str = Query("RR", description="Name of the rain rate variable"),  # noqa: B008
     units: str | None = Query(None, description="Input units, overriding the file's 'units' attribute"),  # noqa: B008
     past_steps: int = Query(  # noqa: B008
@@ -108,12 +107,42 @@ async def predict(
     min_rain_rate: float = Query(  # noqa: B008
         PHYSICAL_FLOOR_MM_H, ge=0, description="Values at or below this (mm/h) are returned as 0; 0 disables"
     ),
-):
-    """
-    Run ensemble nowcasting inference on uploaded NetCDF data.
+) -> dict:
+    """Query parameters shared by the forecast endpoints."""
+    return {
+        "variable": variable,
+        "units": units,
+        "past_steps": past_steps,
+        "forecast_steps": forecast_steps,
+        "ensemble_size": ensemble_size,
+        "min_rain_rate": min_rain_rate,
+    }
 
-    Accepts a NetCDF file containing past radar rain rate observations and
-    returns NetCDF predictions with ensemble forecasts.
+
+def _numbers(text: str | None, default: tuple[float, ...]) -> tuple[float, ...]:
+    """Parse a comma-separated list of numbers; None keeps the default, an empty string means none."""
+    if text is None:
+        return default
+    try:
+        return tuple(float(v) for v in text.split(",") if v.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Expected comma-separated numbers, got '{text}'.") from exc
+
+
+async def _forecast_from_upload(
+    file: UploadFile,
+    variable: str,
+    units: str | None,
+    past_steps: int,
+    forecast_steps: int,
+    ensemble_size: int,
+    min_rain_rate: float,
+) -> tuple[xr.Dataset, list[str], str]:
+    """
+    Validate the upload, run the model and build the georeferenced forecast dataset.
+
+    Returns the dataset, the input messages and the units used. Every
+    rejection is an HTTPException with a 4xx status and a plain reason.
     """
     t0 = time.perf_counter()
 
@@ -143,22 +172,13 @@ async def predict(
     try:
         ds = xr.open_dataset(io.BytesIO(content), engine=engine)
     except Exception as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Failed to read NetCDF file: {exc}",
-        ) from exc
+        raise HTTPException(status_code=422, detail=f"Failed to read NetCDF file: {exc}") from exc
 
-    # Check variable exists
     if variable not in ds:
         available = list(ds.data_vars)
-        raise HTTPException(
-            status_code=422,
-            detail=f"Variable '{variable}' not found. Available: {available}",
-        )
+        raise HTTPException(status_code=422, detail=f"Variable '{variable}' not found. Available: {available}")
 
     da = ds[variable]
-
-    # Must be 3D
     if da.ndim != 3:
         raise HTTPException(
             status_code=422,
@@ -187,21 +207,15 @@ async def predict(
     if horizon_warning:
         rain.messages.append(horizon_warning)
     if np.isinf(rain.values).any():
-        raise HTTPException(
-            status_code=422,
-            detail="Input data contains Inf values.",
-        )
+        raise HTTPException(status_code=422, detail="Input data contains Inf values.")
 
     # Replace NaN with 0 (no rain) — common for masked radar pixels
     past = np.nan_to_num(rain.values, nan=0.0)
 
-    # Run inference
     preds = _model.predict(past, forecast_steps=forecast_steps, ensemble_size=ensemble_size)
     preds = apply_floor(preds, min_rain_rate)
 
     elapsed = time.perf_counter() - t0
-
-    # Build output NetCDF, carrying over coordinates, grid mapping and valid times
     ds_out = build_forecast_dataset(
         preds,
         da,
@@ -216,21 +230,95 @@ async def predict(
             "input_messages": "; ".join(rain.messages),
         },
     )
+    return ds_out, rain.messages, rain.units
 
+
+def _netcdf_response(ds: xr.Dataset, filename: str, headers: dict[str, str]) -> Response:
+    """Serialize a dataset to a compressed NetCDF4 file and wrap it in a download response."""
+    encoding = {name: {"zlib": True, "complevel": 4} for name in ds.data_vars if name != "crs"}
     with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp_out:
         tmp_out_path = tmp_out.name
-    ds_out.to_netcdf(tmp_out_path, engine="netcdf4", encoding=NETCDF_ENCODING)
+    ds.to_netcdf(tmp_out_path, engine="netcdf4", encoding=encoding)
     with open(tmp_out_path, "rb") as fh:
         out_bytes = fh.read()
     os.unlink(tmp_out_path)
-
     return Response(
         content=out_bytes,
         media_type="application/x-netcdf",
-        headers={
-            "Content-Disposition": "attachment; filename=predictions.nc",
+        headers={"Content-Disposition": f"attachment; filename={filename}", **headers},
+    )
+
+
+@app.post("/predict")
+async def predict(
+    file: UploadFile = File(..., description="NetCDF file with rain rate data (T, H, W)"),  # noqa: B008
+    params: dict = Depends(forecast_params),  # noqa: B008
+):
+    """
+    Run ensemble nowcasting inference on uploaded NetCDF data.
+
+    Accepts a NetCDF file containing past radar rain rate observations and
+    returns a NetCDF file with every ensemble member, on the input grid.
+    """
+    t0 = time.perf_counter()
+    ds_out, messages, units = await _forecast_from_upload(file, **params)
+    elapsed = time.perf_counter() - t0
+    return _netcdf_response(
+        ds_out,
+        "predictions.nc",
+        {
             "X-Elapsed-Seconds": f"{elapsed:.3f}",
-            "X-Input-Units": rain.units,
-            "X-Input-Messages": "; ".join(rain.messages),
+            "X-Input-Units": units,
+            "X-Input-Messages": "; ".join(messages),
+        },
+    )
+
+
+@app.post("/products")
+async def products(
+    file: UploadFile = File(..., description="NetCDF file with rain rate data (T, H, W)"),  # noqa: B008
+    params: dict = Depends(forecast_params),  # noqa: B008
+    thresholds: str | None = Query(  # noqa: B008
+        None,
+        description=f"Rain rates in mm/h for the probability of exceedance, e.g. '1,5,20' (default {DEFAULT_THRESHOLDS_MM_H})",
+    ),
+    percentiles: str | None = Query(  # noqa: B008
+        None, description=f"Ensemble percentiles 0-100, e.g. '10,50,90' (default {DEFAULT_PERCENTILES})"
+    ),
+    accumulations: str | None = Query(  # noqa: B008
+        None, description=f"Accumulation windows in minutes, e.g. '30,60' (default {DEFAULT_ACCUMULATIONS_MIN})"
+    ),
+):
+    """
+    Run the ensemble and return its summary products instead of the members.
+
+    Same input and parameters as ``/predict``; the answer is a NetCDF file
+    with the ensemble mean, median and spread, the percentiles, the
+    probability of exceeding each threshold and the accumulations, on the
+    input grid with its georeference.
+    """
+    t0 = time.perf_counter()
+    thresholds_v = _numbers(thresholds, DEFAULT_THRESHOLDS_MM_H)
+    percentiles_v = _numbers(percentiles, DEFAULT_PERCENTILES)
+    accumulations_v = _numbers(accumulations, DEFAULT_ACCUMULATIONS_MIN)
+    if any(not 0 <= p <= 100 for p in percentiles_v):
+        raise HTTPException(status_code=422, detail="Percentiles must be within 0-100.")
+
+    ds_out, messages, units = await _forecast_from_upload(file, **params)
+    summary = ensemble_products(
+        ds_out, thresholds=thresholds_v, percentiles=percentiles_v, accumulations_min=accumulations_v
+    )
+    for key in ("past_steps", "min_rain_rate", "beyond_training_horizon", "input_units", "input_messages"):
+        if key in ds_out.attrs:
+            summary.attrs[key] = ds_out.attrs[key]
+    elapsed = time.perf_counter() - t0
+    summary.attrs["elapsed_seconds"] = f"{elapsed:.3f}"
+    return _netcdf_response(
+        summary,
+        "products.nc",
+        {
+            "X-Elapsed-Seconds": f"{elapsed:.3f}",
+            "X-Input-Units": units,
+            "X-Input-Messages": "; ".join(messages),
         },
     )
