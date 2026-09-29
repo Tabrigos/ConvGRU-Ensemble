@@ -67,7 +67,7 @@ convgru-ensemble predict \
 <summary><b>Serve via API</b></summary>
 
 ```bash
-# With Docker
+# With Docker or Podman
 docker compose up
 
 # Or directly
@@ -271,18 +271,32 @@ Input (B, T_past, 1, H, W)
 Output (B, T_future, M, H, W)
 ```
 
-## Docker
+## Container (Docker or Podman)
+
+The image serves the API on CPU. It is built in two stages and ships the CPU
+build of torch, so it stays around 1.5 GB instead of the several GB of the CUDA
+build; it runs as an unprivileged user and keeps the HuggingFace cache on a
+volume, so the 770 MB checkpoint is downloaded once.
 
 ```bash
-docker build -t convgru-ensemble .
+podman build -t convgru-ensemble .        # or: docker build -t convgru-ensemble .
 
-# Run with local checkpoint
-docker run -p 8000:8000 -v ./checkpoints:/app/checkpoints \
-    -e MODEL_CHECKPOINT=/app/checkpoints/model.ckpt convgru-ensemble
+# Model from HuggingFace Hub (default HF_REPO_ID=it4lia/irene), cache on a named volume
+podman run -p 8000:8000 -v hf-cache:/data/hf convgru-ensemble
 
-# Run with HuggingFace Hub
-docker run -p 8000:8000 -e HF_REPO_ID=it4lia/irene convgru-ensemble
+# Model from a local checkpoint: empty HF_REPO_ID and mount the file
+podman run -p 8000:8000 -v ./checkpoints:/app/checkpoints:ro     -e HF_REPO_ID= -e MODEL_CHECKPOINT=/app/checkpoints/model.ckpt convgru-ensemble
+
+# Allow forecasts beyond the trained 12 steps
+podman run -p 8000:8000 -v hf-cache:/data/hf -e MAX_FORECAST_STEPS=24 convgru-ensemble
+
+# Or with compose
+podman compose up                          # or: docker compose up
 ```
+
+The container reports healthy once the model is loaded (`/health` returns
+`model_loaded: true`); the first start with an empty cache takes the time of the
+download.
 
 ## Project Structure
 

@@ -1,12 +1,28 @@
 services:
   api:
     build: .
+    image: convgru-ensemble:latest
     ports:
       - "8000:8000"
-    volumes:
-      - ./checkpoints:/app/checkpoints
     environment:
-      - MODEL_CHECKPOINT=/app/checkpoints/model.ckpt
+      # Model source: the HuggingFace repo (downloaded once into the hf-cache volume)...
+      - HF_REPO_ID=it4lia/irene
+      # ...or a local checkpoint: empty HF_REPO_ID and mount the file.
+      # - HF_REPO_ID=
+      # - MODEL_CHECKPOINT=/app/checkpoints/model.ckpt
       - DEVICE=cpu
-      # Alternative: download from HuggingFace Hub
-      # - HF_REPO_ID=it4lia/irene
+      # Cap on forecast_steps per request; default is the trained horizon (12).
+      # - MAX_FORECAST_STEPS=24
+    volumes:
+      - hf-cache:/data/hf
+      # - ./checkpoints:/app/checkpoints:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,sys,urllib.request; r=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)); sys.exit(0 if r.get('model_loaded') else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+
+volumes:
+  hf-cache:
