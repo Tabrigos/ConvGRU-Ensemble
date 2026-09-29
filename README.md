@@ -169,6 +169,8 @@ Requires Python >= 3.13. Uses [uv](https://github.com/astral-sh/uv) for dependen
 ```bash
 uv sync                    # core dependencies
 uv sync --extra serve      # + FastAPI serving
+uv sync --extra geo        # + GeoTIFF export (rasterio)
+uv sync --extra train      # + notebook and training tooling (jupyterlab, pysteps, tensorboard)
 ```
 
 ## Data Preparation
