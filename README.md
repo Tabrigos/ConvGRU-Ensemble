@@ -271,6 +271,27 @@ Input (B, T_past, 1, H, W)
 Output (B, T_future, M, H, W)
 ```
 
+## Weights without pickles (safetensors)
+
+A Lightning `.ckpt` is a pickle: loading it executes code from the file. That is
+acceptable for the official checkpoint and not for a production server that
+loads weights from a path someone else can write to. Convert once, on a
+checkpoint you trust, then serve from the exported weights:
+
+```bash
+convgru-ensemble export-weights --hub-repo it4lia/irene --output weights/
+# weights/model.safetensors + weights/config.json (architecture, inference hyperparameters,
+# training notes, sha256 of the source checkpoint)
+
+convgru-ensemble predict --weights weights/model.safetensors --input examples/sample_data.nc
+convgru-ensemble serve --weights weights/model.safetensors        # or env MODEL_WEIGHTS
+```
+
+`from_pretrained` uses `model.safetensors` + `config.json` when a Hub repository
+has them, and falls back to `model.ckpt` otherwise. Pin the revision in
+production (`--hub-revision <sha>`, env `HF_REVISION`) so the weights cannot
+change under you.
+
 ## Container (Docker or Podman)
 
 The image serves the API on CPU. It is built in two stages and ships the CPU

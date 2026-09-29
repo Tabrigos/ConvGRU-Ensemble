@@ -77,9 +77,16 @@ def from_pretrained(
     repo_id: str,
     filename: str = "model.ckpt",
     device: str = "cpu",
+    revision: str | None = None,
+    prefer_safetensors: bool = True,
 ) -> "RadarLightningModel":  # noqa: F821
     """
     Download and load a pretrained model from HuggingFace Hub.
+
+    When the repository has ``model.safetensors`` and ``config.json`` and
+    ``prefer_safetensors`` is set, the model is built from those without
+    unpickling anything; otherwise the Lightning checkpoint ``filename`` is
+    loaded (a pickle: trust the repository).
 
     Parameters
     ----------
@@ -90,13 +97,31 @@ def from_pretrained(
         ``'model.ckpt'``.
     device : str, optional
         Device to map the model weights to. Default is ``'cpu'``.
+    revision : str or None, optional
+        Git revision of the repository (branch, tag or commit sha). Pin a
+        commit sha in production so the weights cannot change under you.
+        Default is the main branch.
+    prefer_safetensors : bool, optional
+        Use ``model.safetensors`` when the repository has it. Default ``True``.
 
     Returns
     -------
     model : RadarLightningModel
         Model with loaded pretrained weights.
     """
-    from .lightning_model import RadarLightningModel
+    from huggingface_hub.errors import EntryNotFoundError
 
-    ckpt_path = hf_hub_download(repo_id=repo_id, filename=filename)
+    from .lightning_model import RadarLightningModel
+    from .weights import CONFIG_FILE, WEIGHTS_FILE, load_weights
+
+    if prefer_safetensors:
+        try:
+            weights = hf_hub_download(repo_id=repo_id, filename=WEIGHTS_FILE, revision=revision)
+            config = hf_hub_download(repo_id=repo_id, filename=CONFIG_FILE, revision=revision)
+        except EntryNotFoundError:
+            pass
+        else:
+            return load_weights(weights, config, device=device)
+
+    ckpt_path = hf_hub_download(repo_id=repo_id, filename=filename, revision=revision)
     return RadarLightningModel.from_checkpoint(ckpt_path, device=device)

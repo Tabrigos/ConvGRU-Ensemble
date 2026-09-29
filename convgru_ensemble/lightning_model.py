@@ -453,7 +453,9 @@ class RadarLightningModel(pl.LightningModule):
         )
 
     @classmethod
-    def from_pretrained(cls, repo_id: str, filename: str = "model.ckpt", device: str = "cpu") -> "RadarLightningModel":
+    def from_pretrained(
+        cls, repo_id: str, filename: str = "model.ckpt", device: str = "cpu", revision: str | None = None
+    ) -> "RadarLightningModel":
         """
         Load a pretrained model from HuggingFace Hub.
 
@@ -466,6 +468,9 @@ class RadarLightningModel(pl.LightningModule):
             ``'model.ckpt'``.
         device : str, optional
             Device to map the model weights to. Default is ``'cpu'``.
+        revision : str or None, optional
+            Git revision of the repository (branch, tag or commit sha).
+            Default is the main branch.
 
         Returns
         -------
@@ -474,7 +479,7 @@ class RadarLightningModel(pl.LightningModule):
         """
         from .hub import from_pretrained
 
-        return from_pretrained(repo_id, filename, device)
+        return from_pretrained(repo_id, filename, device, revision=revision)
 
     def predict(self, past: torch.Tensor, forecast_steps: int = 1, ensemble_size: int | None = 1) -> torch.Tensor:
         """
